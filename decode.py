@@ -7,12 +7,25 @@ from multiprocessing import Pool
 
 
 def decode(A, y):
-    """
-    min [ 0 1 ]^T[ g  t ]
+    """Decode y
 
-    s.t.
-    [ -A -I ][ g ] <= [ -y ]
-    [  A -I ][ t ]    [  y ]
+    Parameters
+    ----------
+    A : np.array
+        Encoding matrix
+    y : np.array
+        Ax + e for some error e
+
+    Returns
+    -------
+    np.array
+        Solving the standard LP
+
+        min [ 0 1 ]^T[ g  t ]
+
+        s.t.
+        [ -A -I ][ g ] <= [ -y ]
+        [  A -I ][ t ]    [  y ]
     """
 
     A_ub = np.concatenate((
@@ -26,11 +39,27 @@ def decode(A, y):
 
     return optimize.linprog(
         lp_coeff, A_ub=A_ub, b_ub=b_ub,
-        bounds=[(None, None) for _ in range(A.shape[0] + A.shape[1])])
+        bounds=[(None, None) for _ in range(A.shape[0] + A.shape[1])],
+        method='simplex',
+        options={'tol': 1e-9, 'maxiter': 10000})
 
 
 def form(n=256, error=0.1, mscale=2):
-    """
+    """Form test inputs
+
+    Parameters
+    ----------
+    n : int
+        Input dimensions
+    error : float
+        Corruption ratio
+    mscale : int
+        m as a factor of n (i.e. m=2n <=> mscale=2)
+
+    Returns
+    -------
+    [np.array, np.array, np.array, np.array]
+        [A, x, e, y]
     """
 
     m = mscale * n
@@ -43,7 +72,26 @@ def form(n=256, error=0.1, mscale=2):
     return A, x, e, y
 
 
-def test(n, error, mscale, threshold=1e-13):
+def test(n, error, mscale, threshold=1e-7):
+    """Run a single test
+
+    Parameters
+    ----------
+    n : int
+        Input dimensions
+    error : float
+        Corruption ratio
+    mscale : int
+        m as a factor of n (i.e. m=2n <=> mscale=2)
+    threshold : float
+        threshold to consider two values the same
+
+    Returns
+    -------
+    [float, int]
+        0: l_0 norm of the error, with errors under ``threshold`` ignored
+        1: status code returned by scipy.optimize.
+    """
 
     A, x, e, y = form(n=n, error=error, mscale=mscale)
 
@@ -54,29 +102,51 @@ def test(n, error, mscale, threshold=1e-13):
 
     err = np.linalg.norm(error, ord=0)
 
-    return err
+    return err, opt.status
 
 
 def test_mp(args):
+    """Procpool compatible wrapper of test"""
 
     n, error, mscale, threshold = args
     return test(n, error, mscale, threshold)
 
 
 def profile(n, error, mscale, iterations, task):
+    """Run profile for given parameters
+
+    Parameters
+    ----------
+    n : int
+        Input dimensions
+    error : float
+        Corruption ratio
+    mscale : int
+        m as a factor of n (i.e. m=2n <=> mscale=2)
+    iterations : int
+        Number of tests to run
+
+    Returns
+    -------
+    [float, float[], int[]]
+        [proportion error, error values, status code of scipy.optimize.linprog]
+    """
 
     task.start("Profiling error level e={}".format(error))
 
     p = Pool()
-    errors = p.map(
+    res = p.map(
         test_mp, [[n, error, mscale, 1e-13] for _ in range(iterations)])
 
+    errors = [r[0] for r in res]
+    status = [r[1] for r in res]
+
     perr = len([i for i in errors if i == 0]) / len(errors)
+
     task.info("success: " + str(perr))
     task.info("values: " + str(errors))
-    task.done()
 
-    return perr
+    return perr, errors, status
 
 
 if __name__ == '__main__':

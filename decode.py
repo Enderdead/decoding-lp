@@ -3,6 +3,8 @@ from scipy import optimize
 from scipy import sparse
 import math
 
+from multiprocessing import Pool
+
 
 def decode(A, y):
     """
@@ -27,52 +29,69 @@ def decode(A, y):
         bounds=[(None, None) for _ in range(A.shape[0] + A.shape[1])])
 
 
-def form(s=256, e=0.1, mul=2):
+def form(n=256, error=0.1, mscale=2):
     """
     """
 
-    A = np.random.normal(size=(mul * s, s), scale=math.sqrt(1 / s))
-    x = np.random.normal(size=(s, 1))
-    e = sparse.random(mul * s, 1, density=e).A
-    y = np.matmul(A, x)  # + e
+    m = mscale * n
+
+    A = np.random.normal(size=(m, n), scale=math.sqrt(1 / n))
+    x = np.random.normal(size=(n, 1))
+    e = sparse.random(m, 1, density=error).A
+    y = np.matmul(A, x) + e
 
     return A, x, e, y
 
 
-def test(S, e, mul, task):
+def test(n, error, mscale, threshold=1e-13):
 
-    task.start("Testing n={}, m={}n".format(S, mul))
-
-    A, x, e, y = form(s=S, e=e, mul=mul)
+    A, x, e, y = form(n=n, error=error, mscale=mscale)
 
     opt = decode(A, y)
 
-    """
-    print("e:")
-    print(e)
+    error = x[:, 0] - opt.x[:n]
+    error[np.abs(error) < threshold] = 0
 
-    print("original:")
-    print(x[:, 0])
-    print("obj:")
-    print(opt.fun)
-    print(opt.x[:S])
-    print('err:')
-    """
-
-    err = np.linalg.norm(x[:, 0] - opt.x[:S]) / np.linalg.norm(x[:, 0])
-
-    task.done()
+    err = np.linalg.norm(error, ord=0)
 
     return err
+
+
+def test_mp(args):
+
+    n, error, mscale, threshold = args
+    return test(n, error, mscale, threshold)
+
+
+def profile(n, error, mscale, iterations, task):
+
+    task.start("Profiling error level e={}".format(error))
+
+    p = Pool()
+    errors = p.map(
+        test_mp, [[n, error, mscale, 1e-13] for _ in range(iterations)])
+
+    perr = len([i for i in errors if i == 0]) / len(errors)
+    task.info("success: " + str(perr))
+    task.info("values: " + str(errors))
+    task.done()
+
+    return perr
 
 
 if __name__ == '__main__':
 
     import syllabus
 
-    n = 100
+    n = 128
     mscale = 2
 
-    main = syllabus.BasicTaskApp().start(
-        "LP Decoding: m={}, mscale={}".format(m, mscale))
-    main.add_task(25)
+    main = syllabus.BasicTaskApp(mp=True).start(
+        "LP Decoding: m={}, mscale={}".format(n, mscale))
+
+    res = []
+    for e in range(10):
+        res.append(profile(n, 0.05 * (e + 1), mscale, 10, main.subtask()))
+
+    main.info("Results: " + str(res))
+    main.done()

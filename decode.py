@@ -39,7 +39,7 @@ def decode(A, y):
 
     return optimize.linprog(
         lp_coeff, A_ub=A_ub, b_ub=b_ub,
-        bounds=[(None, None) for _ in range(A.shape[0] + A.shape[1])],
+        bounds=[(None, None) for _ in range(A.shape[1])] + [(0, None) for _ in range(A.shape[0])],
         method='simplex',
         options={'tol': 1e-9, 'maxiter': 10000})
 
